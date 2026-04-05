@@ -56,7 +56,7 @@
         import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
         // 1. REEMPLAZA ESTO CON LA CONFIGURACIÓN DE TU PROYECTO FIREBASE
-        const firebaseConfig = {
+               const firebaseConfig = {
     apiKey: "AIzaSyBN_AD2yTn2E0aPfSLW0E1wf7k2KRlxv3Q",
     authDomain: "demokratik-7c61b.firebaseapp.com",
     projectId: "demokratik-7c61b",
@@ -82,46 +82,96 @@
             options: { responsive: true, maintainAspectRatio: false }
         });
 
-        // 3. Lógica Principal: Búsqueda y Caché
+        // 3. NUEVA FUNCIÓN: Extraer XML directamente desde el navegador
+        async function buscarEnCamaraDirecto(id) {
+            // Usamos AllOrigins como puente para evitar el bloqueo CORS del navegador
+            const urlCongreso = encodeURIComponent(`https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${id}`);
+            const proxyUrl = `https://api.allorigins.win/get?url=${urlCongreso}`;
+
+            const respuesta = await fetch(proxyUrl);
+            if (!respuesta.ok) throw new Error('Error al conectar con el puente de datos');
+
+            const datosProxy = await respuesta.json();
+            const xmlCrudo = datosProxy.contents;
+
+            if (!xmlCrudo || xmlCrudo.includes('403 Forbidden') || !xmlCrudo.includes('<Votacion>')) {
+                throw new Error('El Congreso bloqueó la petición o el ID no existe.');
+            }
+
+            // Parsear el XML usando las herramientas nativas del navegador (DOMParser)
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlCrudo, "text/xml");
+
+            // Extraer los datos generales navegando por las etiquetas XML
+            const aFavor = parseInt(xmlDoc.getElementsByTagName("TotalAfavor")[0]?.textContent) || 0;
+            const enContra = parseInt(xmlDoc.getElementsByTagName("TotalEnContra")[0]?.textContent) || 0;
+            const abstenciones = parseInt(xmlDoc.getElementsByTagName("TotalAbstencion")[0]?.textContent) || 0;
+            const pareos = parseInt(xmlDoc.getElementsByTagName("TotalDispensados")[0]?.textContent) || 0;
+
+            // Extraer el detalle de cada diputado
+            const votosNodos = xmlDoc.getElementsByTagName("Voto");
+            const detalleVotos = [];
+            
+            for (let i = 0; i < votosNodos.length; i++) {
+                const votoNodo = votosNodos[i];
+                const diputadoNodo = votoNodo.getElementsByTagName("Diputado")[0];
+
+                const nombre = diputadoNodo.getElementsByTagName("Nombre")[0]?.textContent || "";
+                const apPaterno = diputadoNodo.getElementsByTagName("ApellidoPaterno")[0]?.textContent || "";
+                const apMaterno = diputadoNodo.getElementsByTagName("ApellidoMaterno")[0]?.textContent || "";
+                const opcion = votoNodo.getElementsByTagName("OpcionVoto")[0]?.textContent || "";
+
+                detalleVotos.push({
+                    nombre: `${nombre} ${apPaterno} ${apMaterno}`.trim(),
+                    opcion: opcion
+                });
+            }
+
+            return {
+                id: xmlDoc.getElementsByTagName("Id")[0]?.textContent || id,
+                descripcion: xmlDoc.getElementsByTagName("Descripcion")[0]?.textContent || "Sin descripción",
+                fecha: xmlDoc.getElementsByTagName("Fecha")[0]?.textContent || "Fecha desconocida",
+                resultados: { aFavor, enContra, abstenciones, pareos },
+                detalleVotos: detalleVotos
+            };
+        }
+
+        // 4. Lógica Principal: Búsqueda -> Caché Firebase -> Render
         document.getElementById('btnBuscar').addEventListener('click', async () => {
             const id = document.getElementById('inputId').value;
             if (!id) return alert("Por favor ingresa un ID");
 
-            document.getElementById('tituloLey').innerText = "Cargando...";
+            document.getElementById('tituloLey').innerText = "Conectando con el Congreso...";
+            document.getElementById('tablaDetalle').style.display = 'none';
 
             try {
-                // PASO A: Buscar primero en Firebase (Caché)
+                // Revisamos Firebase primero
                 const dbRef = ref(db, 'votaciones/' + id);
                 const snapshot = await get(dbRef);
 
                 if (snapshot.exists()) {
-                    console.log("Cargado desde Firebase 🔥");
+                    console.log("Cargado rápido desde Firebase 🔥");
                     renderizarInterfaz(snapshot.val());
                 } else {
-                    // PASO B: Si no está en Firebase, llamamos a nuestra API Serverless
-                    console.log("No está en caché. Buscando en la Cámara...");
-                    const respuesta = await fetch(`/api/votacion?id=${id}`);
-                    const datos = await respuesta.json();
+                    // Si no está, usamos nuestra nueva función Frontend
+                    console.log("Extrayendo datos en vivo...");
+                    const datos = await buscarEnCamaraDirecto(id);
 
-                    if (datos.error) throw new Error(datos.error);
-
-                    // PASO C: Guardamos en Firebase para la próxima vez
+                    // Guardamos en Firebase para la próxima y renderizamos
                     await set(dbRef, datos);
                     renderizarInterfaz(datos);
                 }
             } catch (error) {
                 console.error(error);
-                document.getElementById('tituloLey').innerText = "Error al encontrar la votación";
+                document.getElementById('tituloLey').innerText = "Error: " + error.message;
             }
         });
 
-        // 4. Función para actualizar el DOM con los datos
+        // 5. Función para pintar los datos en pantalla
         function renderizarInterfaz(datos) {
-            // Actualizar Textos
             document.getElementById('tituloLey').innerText = `Proyecto: ${datos.descripcion}`;
             document.getElementById('fechaLey').innerText = `Fecha: ${datos.fecha.split('T')[0]}`;
 
-            // Actualizar Gráfico
             miGrafico.data.datasets[0].data = [
                 datos.resultados.aFavor,
                 datos.resultados.enContra,
@@ -130,9 +180,8 @@
             ];
             miGrafico.update();
 
-            // Llenar Tabla de Detalle
             const tbody = document.getElementById('cuerpoTabla');
-            tbody.innerHTML = ""; // Limpiamos tabla anterior
+            tbody.innerHTML = ""; 
             
             datos.detalleVotos.forEach(voto => {
                 let claseColor = '';
