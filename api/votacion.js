@@ -2,29 +2,34 @@
 import { parseStringPromise } from 'xml2js';
 
 export default async function handler(req, res) {
-    // 1. Recibimos el ID dinámicamente desde el Frontend
     const votacionId = req.query.id; 
     
     if (!votacionId) {
         return res.status(400).json({ error: 'Falta el ID de la votación' });
     }
 
-    const url = `http://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${votacionId}`;
+    // CAMBIO 1: Usamos HTTPS obligatoriamente
+    const url = `https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${votacionId}`;
 
     try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Error al conectar con la Cámara');
+        // CAMBIO 2: Agregamos Headers para simular un navegador real y evitar el bloqueo
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/xml, text/xml, */*'
+            }
+        });
+
+        if (!response.ok) throw new Error(`Error de la Cámara: ${response.status}`);
         
         const xmlData = await response.text();
         const result = await parseStringPromise(xmlData, { explicitArray: false });
         const detalle = result.Votacion; 
         
-        // 2. Extraemos el detalle individual de cada diputado
         let votosIndividuales = [];
         if (detalle.Votos && detalle.Votos.Voto) {
-            // Aseguramos que sea un array por si xml2js lo parsea como objeto único
             const listaVotos = Array.isArray(detalle.Votos.Voto) ? detalle.Votos.Voto : [detalle.Votos.Voto];
-            
             votosIndividuales = listaVotos.map(v => ({
                 nombre: `${v.Diputado.Nombre} ${v.Diputado.ApellidoPaterno} ${v.Diputado.ApellidoMaterno || ''}`.trim(),
                 opcion: v.OpcionVoto
@@ -41,14 +46,14 @@ export default async function handler(req, res) {
                 abstenciones: parseInt(detalle.TotalAbstencion) || 0,
                 pareos: parseInt(detalle.TotalDispensados) || 0 
             },
-            detalleVotos: votosIndividuales // Añadimos la lista a la respuesta
+            detalleVotos: votosIndividuales
         };
 
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.status(200).json(datosLimpios);
 
     } catch (error) {
-        console.error(error);
+        console.error("Error en el backend:", error);
         res.status(500).json({ error: 'Hubo un problema procesando los datos' });
     }
 }
