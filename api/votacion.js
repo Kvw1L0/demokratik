@@ -11,7 +11,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Falta el ID de la votación' });
     }
 
-    const url = `https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${votacionId}`;
+    const url = `https://corsproxy.io/?https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${votacionId}`;
 
     try {
         const response = await fetch(url, {
