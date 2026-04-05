@@ -1,0 +1,16 @@
+{
+  "name": "votaciones-congreso-webapp",
+  "version": "1.0.0",
+  "description": "Dashboard interactivo para visualizar votaciones de la Cámara de Diputados de Chile",
+  "main": "index.html",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "xml2js": "^0.6.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
