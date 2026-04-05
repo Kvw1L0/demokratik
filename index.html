@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Congreso - Votaciones</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f4f7f6; color: #333; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .dashboard { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 800px; width: 100%; text-align: center; }
+        .search-bar { display: flex; gap: 10px; justify-content: center; margin-bottom: 20px; }
+        input { padding: 10px; border: 1px solid #ccc; border-radius: 6px; width: 60%; font-size: 16px; }
+        button { padding: 10px 20px; background: #0056b3; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #004494; }
+        .chart-container { height: 300px; width: 100%; margin: 20px 0; }
+        
+        /* Estilos para la tabla */
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
+        th, td { padding: 10px; border-bottom: 1px solid #eee; text-align: left; }
+        th { background: #f9f9f9; }
+        .voto-a-favor { color: #4CAF50; font-weight: bold; }
+        .voto-en-contra { color: #F44336; font-weight: bold; }
+        .voto-abstencion { color: #FFC107; font-weight: bold; }
+        .voto-pareo { color: #9E9E9E; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard">
+        <div class="search-bar">
+            <input type="number" id="inputId" placeholder="Ingresa ID de votación (Ej: 39486)">
+            <button id="btnBuscar">Buscar</button>
+        </div>
+
+        <h2 id="tituloLey">Busca una votación</h2>
+        <p id="fechaLey">Ingresa el ID del proyecto para visualizar los datos</p>
+        
+        <div class="chart-container">
+            <canvas id="graficoVotacion"></canvas>
+        </div>
+
+        <table id="tablaDetalle" style="display: none;">
+            <thead>
+                <tr>
+                    <th>Diputado/a</th>
+                    <th>Voto</th>
+                </tr>
+            </thead>
+            <tbody id="cuerpoTabla">
+                </tbody>
+        </table>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
+        // 1. REEMPLAZA ESTO CON LA CONFIGURACIÓN DE TU PROYECTO FIREBASE
+        const firebaseConfig = {
+            apiKey: "TU_API_KEY",
+            authDomain: "TU_PROYECTO.firebaseapp.com",
+            databaseURL: "https://TU_PROYECTO.firebaseio.com",
+            projectId: "TU_PROYECTO",
+            storageBucket: "TU_PROYECTO.appspot.com",
+            messagingSenderId: "TUS_DATOS",
+            appId: "TUS_DATOS"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // 2. Configuración inicial del Gráfico
+        const ctx = document.getElementById('graficoVotacion').getContext('2d');
+        let miGrafico = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['A Favor', 'En Contra', 'Abstenciones', 'Pareos/Ausentes'],
+                datasets: [{
+                    data: [0, 0, 0, 0],
+                    backgroundColor: ['#4CAF50', '#F44336', '#FFC107', '#9E9E9E'],
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // 3. Lógica Principal: Búsqueda y Caché
+        document.getElementById('btnBuscar').addEventListener('click', async () => {
+            const id = document.getElementById('inputId').value;
+            if (!id) return alert("Por favor ingresa un ID");
+
+            document.getElementById('tituloLey').innerText = "Cargando...";
+
+            try {
+                // PASO A: Buscar primero en Firebase (Caché)
+                const dbRef = ref(db, 'votaciones/' + id);
+                const snapshot = await get(dbRef);
+
+                if (snapshot.exists()) {
+                    console.log("Cargado desde Firebase 🔥");
+                    renderizarInterfaz(snapshot.val());
+                } else {
+                    // PASO B: Si no está en Firebase, llamamos a nuestra API Serverless
+                    console.log("No está en caché. Buscando en la Cámara...");
+                    const respuesta = await fetch(`/api/votacion?id=${id}`);
+                    const datos = await respuesta.json();
+
+                    if (datos.error) throw new Error(datos.error);
+
+                    // PASO C: Guardamos en Firebase para la próxima vez
+                    await set(dbRef, datos);
+                    renderizarInterfaz(datos);
+                }
+            } catch (error) {
+                console.error(error);
+                document.getElementById('tituloLey').innerText = "Error al encontrar la votación";
+            }
+        });
+
+        // 4. Función para actualizar el DOM con los datos
+        function renderizarInterfaz(datos) {
+            // Actualizar Textos
+            document.getElementById('tituloLey').innerText = `Proyecto: ${datos.descripcion}`;
+            document.getElementById('fechaLey').innerText = `Fecha: ${datos.fecha.split('T')[0]}`;
+
+            // Actualizar Gráfico
+            miGrafico.data.datasets[0].data = [
+                datos.resultados.aFavor,
+                datos.resultados.enContra,
+                datos.resultados.abstenciones,
+                datos.resultados.pareos
+            ];
+            miGrafico.update();
+
+            // Llenar Tabla de Detalle
+            const tbody = document.getElementById('cuerpoTabla');
+            tbody.innerHTML = ""; // Limpiamos tabla anterior
+            
+            datos.detalleVotos.forEach(voto => {
+                let claseColor = '';
+                if (voto.opcion.includes('Afavor')) claseColor = 'voto-a-favor';
+                else if (voto.opcion.includes('EnContra')) claseColor = 'voto-en-contra';
+                else if (voto.opcion.includes('Abstencion')) claseColor = 'voto-abstencion';
+                else claseColor = 'voto-pareo';
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${voto.nombre}</td>
+                    <td class="${claseColor}">${voto.opcion}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('tablaDetalle').style.display = 'table';
+        }
+    </script>
+</body>
+</html>
