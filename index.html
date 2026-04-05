@@ -83,20 +83,58 @@
         });
 
         // 3. NUEVA FUNCIÓN: Extraer XML directamente desde el navegador
+       // 3. NUEVA FUNCIÓN: Extracción ultra-directa sin proxies
         async function buscarEnCamaraDirecto(id) {
-            // Usamos AllOrigins como puente para evitar el bloqueo CORS del navegador
-            const urlCongreso = encodeURIComponent(`https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${id}`);
-            const proxyUrl = `https://api.allorigins.win/get?url=${urlCongreso}`;
+            // Vamos directo a la fuente, usando tu IP residencial chilena
+            const urlCongreso = `https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${id}`;
 
-            const respuesta = await fetch(proxyUrl);
-            if (!respuesta.ok) throw new Error('Error al conectar con el puente de datos');
+            // Hacemos la petición cruzando los dedos para que no haya bloqueo CORS
+            const respuesta = await fetch(urlCongreso);
+            if (!respuesta.ok) throw new Error('Error al conectar directamente con la Cámara');
 
-            const datosProxy = await respuesta.json();
-            const xmlCrudo = datosProxy.contents;
+            const xmlCrudo = await respuesta.text();
 
-            if (!xmlCrudo || xmlCrudo.includes('403 Forbidden') || !xmlCrudo.includes('<Votacion>')) {
-                throw new Error('El Congreso bloqueó la petición o el ID no existe.');
+            if (!xmlCrudo || xmlCrudo.includes('<title>403 Forbidden</title>')) {
+                throw new Error('El Congreso bloqueó tu IP o el ID no existe.');
             }
+
+            // Parsear el XML usando las herramientas nativas del navegador
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlCrudo, "text/xml");
+
+            // Extraer los datos generales
+            const aFavor = parseInt(xmlDoc.getElementsByTagName("TotalAfavor")[0]?.textContent) || 0;
+            const enContra = parseInt(xmlDoc.getElementsByTagName("TotalEnContra")[0]?.textContent) || 0;
+            const abstenciones = parseInt(xmlDoc.getElementsByTagName("TotalAbstencion")[0]?.textContent) || 0;
+            const pareos = parseInt(xmlDoc.getElementsByTagName("TotalDispensados")[0]?.textContent) || 0;
+
+            // Extraer el detalle de cada diputado
+            const votosNodos = xmlDoc.getElementsByTagName("Voto");
+            const detalleVotos = [];
+            
+            for (let i = 0; i < votosNodos.length; i++) {
+                const votoNodo = votosNodos[i];
+                const diputadoNodo = votoNodo.getElementsByTagName("Diputado")[0];
+
+                const nombre = diputadoNodo.getElementsByTagName("Nombre")[0]?.textContent || "";
+                const apPaterno = diputadoNodo.getElementsByTagName("ApellidoPaterno")[0]?.textContent || "";
+                const apMaterno = diputadoNodo.getElementsByTagName("ApellidoMaterno")[0]?.textContent || "";
+                const opcion = votoNodo.getElementsByTagName("OpcionVoto")[0]?.textContent || "";
+
+                detalleVotos.push({
+                    nombre: `${nombre} ${apPaterno} ${apMaterno}`.trim(),
+                    opcion: opcion
+                });
+            }
+
+            return {
+                id: xmlDoc.getElementsByTagName("Id")[0]?.textContent || id,
+                descripcion: xmlDoc.getElementsByTagName("Descripcion")[0]?.textContent || "Sin descripción",
+                fecha: xmlDoc.getElementsByTagName("Fecha")[0]?.textContent || "Fecha desconocida",
+                resultados: { aFavor, enContra, abstenciones, pareos },
+                detalleVotos: detalleVotos
+            };
+        }
 
             // Parsear el XML usando las herramientas nativas del navegador (DOMParser)
             const parser = new DOMParser();
