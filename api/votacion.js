@@ -1,9 +1,6 @@
 // api/votacion.js
 import { parseStringPromise } from 'xml2js';
 
-// ESTA ES LA LÍNEA MÁGICA: Le dice a Node.js que ignore el certificado vencido del Congreso
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-
 export default async function handler(req, res) {
     const votacionId = req.query.id; 
     
@@ -14,18 +11,23 @@ export default async function handler(req, res) {
     const url = `https://corsproxy.io/?https://opendata.camara.cl/camaradiputados/WServices/WSLegislativo.asmx/obtenerVotacionDetalle?prmVotacionId=${votacionId}`;
 
     try {
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/xml, text/xml, */*'
-            }
-        });
+        const response = await fetch(url);
 
-        if (!response.ok) throw new Error(`Error de la Cámara: ${response.status}`);
+        if (!response.ok) throw new Error(`Error de la Cámara o del Proxy: ${response.status}`);
         
         const xmlData = await response.text();
+        
+        // --- NUEVA LÍNEA DE DETECTIVE ---
+        // Vamos a imprimir los primeros 500 caracteres de lo que nos responde el servidor
+        console.log("🔍 RESPUESTA CRUDA DEL SERVIDOR:", xmlData.substring(0, 500));
+        // --------------------------------
+
         const result = await parseStringPromise(xmlData, { explicitArray: false });
+        
+        if (!result || !result.Votacion) {
+             throw new Error("El XML recibido no tiene el formato esperado. Revisa los logs para ver la respuesta cruda.");
+        }
+        
         const detalle = result.Votacion; 
         
         let votosIndividuales = [];
